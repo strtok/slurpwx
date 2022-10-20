@@ -1,13 +1,17 @@
-use axum::{response::Html, routing::get, Router};
-use prometheus::Registry;
+use axum::{response::Html, routing::get, Extension, Router};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::net::SocketAddr;
+use std::ops::Deref;
 use std::process::Stdio;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Data {
+struct Sample {
     model: String,
     id: Option<u32>,
     #[serde(rename = "temperature_C")]
@@ -15,6 +19,21 @@ struct Data {
     #[serde(rename = "temperature_F")]
     temperature_f: Option<f32>,
     humidity: Option<f32>,
+}
+
+#[derive(Debug, Eq, PartialEq, Hash)]
+struct SampleKey {
+    model: String,
+    id: Option<u32>,
+}
+
+impl Sample {
+    fn key(&self) -> SampleKey {
+        SampleKey {
+            model: self.model.clone(),
+            id: self.id.clone(),
+        }
+    }
 }
 
 #[tokio::main]
@@ -47,21 +66,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // Spawn a thread to read stdout from rtl_443 and populate metrics
     //
-    let _registry = std::sync::Mutex::new(Registry::new());
-    tokio::spawn(async move {
-        let mut reader = BufReader::new(rtl_sdr_stdout).lines();
-        while let Ok(Some(data)) = reader.next_line().await {
-            match serde_json::from_str::<Data>(&data) {
-                Ok(data) => {
-                    println!("{:?}", data);
+    let samples = Arc::new(RwLock::new(HashMap::<SampleKey, Sample>::new()));
+    {
+        let samples = samples.clone();
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(rtl_sdr_stdout).lines();
+            while let Ok(Some(data)) = reader.next_line().await {
+                match serde_json::from_str::<Sample>(&data) {
+                    Ok(sample) => {
+                        println!("{:?}", sample);
+                        let mut samples = samples.write().await;
+                        let _ = samples.insert(sample.key(), sample);
+                    }
+                    Err(e) => eprintln!("could not parse {}: {}", data, e),
                 }
-                Err(e) => eprintln!("could not parse {}: {}", data, e),
             }
-        }
-    });
-
+        });
+    }
     // Start metrics webserver
-    let app = Router::new().route("/metrics", get(handler));
+    let app = Router::new()
+        .route("/metrics", get(metrics))
+        .layer(Extension(samples));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     eprintln!("listening on {}", addr);
@@ -73,6 +98,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handler() -> Html<&'static str> {
-    Html("<h1>Hello, World!</h1>")
+async fn metrics(
+    Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sample>>>>,
+) -> Html<String> {
+    let samples = samples.read().await;
+    Html(format!("{:#?}", samples))
 }
