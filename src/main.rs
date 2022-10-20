@@ -1,13 +1,26 @@
 use axum::{response::Html, routing::get, Router};
+use prometheus::Registry;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::net::SocketAddr;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Data {
+    #[serde(default)]
+    model: String,
+    id: Option<u32>,
+    temperature_C: Option<f32>,
+    temperature_F: Option<f32>,
+    humidity: Option<f32>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
-    // Start rtl_433
+    // Execut rtl_433 process, capturing stdout
     //
     let mut cmd = Command::new("rtl_433");
     cmd.stdout(Stdio::piped());
@@ -23,9 +36,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .take()
         .expect("child did not have a handle to stdout");
 
-    //
-    // Spawn a thread to wait for the child to exit
-    //
     tokio::spawn(async move {
         let status = rtl_sdr_child
             .wait()
@@ -35,12 +45,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     //
-    // Spawn a thread to read stdout from rtl_443
+    // Spawn a thread to read stdout from rtl_443 and populate metrics
     //
+    let registry = std::sync::Mutex::new(Registry::new());
     tokio::spawn(async move {
         let mut reader = BufReader::new(rtl_sdr_stdout).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            println!("{}", line);
+        while let Ok(Some(data)) = reader.next_line().await {
+            match serde_json::from_str::<Data>(&data) {
+                Ok(data) => {
+                    println!("{:?}", data);
+                }
+                Err(e) => eprintln!("could not parse {}: {}", data, e),
+            }
         }
     });
 
