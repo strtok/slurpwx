@@ -23,29 +23,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .take()
         .expect("child did not have a handle to stdout");
 
-    let mut reader = BufReader::new(rtl_sdr_stdout).lines();
-
     //
-    // Asynchronously wait for the child to exit
+    // Spawn a thread to wait for the child to exit
     //
     tokio::spawn(async move {
         let status = rtl_sdr_child
             .wait()
             .await
             .expect("rtl_443 encountered an error");
-
-        println!("rtl_443 status was: {}", status);
+        eprintln!("rtl_443 status was: {}", status);
     });
 
-    while let Some(line) = reader.next_line().await? {
-        println!("line: {}", line);
-    }
+    //
+    // Spawn a thread to read stdout from rtl_443
+    //
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(rtl_sdr_stdout).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            println!("{}", line);
+        }
+    });
 
     // Start metrics webserver
     let app = Router::new().route("/metrics", get(handler));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("listening on {}", addr);
+    eprintln!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await
