@@ -17,9 +17,9 @@ struct Sample {
     model: String,
     id: Option<u32>,
     #[serde(rename = "temperature_C")]
-    temperature_c: Option<f32>,
+    temp_c: Option<f32>,
     #[serde(rename = "temperature_F")]
-    temperature_f: Option<f32>,
+    temp_f: Option<f32>,
     humidity: Option<f32>,
 }
 
@@ -34,6 +34,20 @@ impl Sample {
         SampleKey {
             model: self.model.clone(),
             id: self.id.clone(),
+        }
+    }
+
+    pub fn temp_c(&self) -> Option<f32> {
+        match self.temp_c {
+            Some(c) => Some(c),
+            None => self.temp_f.map(|f| (f - 32.0) * 0.5556),
+        }
+    }
+
+    pub fn temp_f(&self) -> Option<f32> {
+        match self.temp_f {
+            Some(f) => Some(f),
+            None => self.temp_c.map(|c| (c * 1.8) + 32.0),
         }
     }
 }
@@ -119,25 +133,14 @@ async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sam
             sample.1.id.unwrap_or(0)
         );
 
-        let mut temp_c = sample.1.temperature_c;
-        let mut temp_f = sample.1.temperature_f;
-
-        if temp_c.is_some() && temp_f.is_none() {
-            temp_f = Some((temp_c.unwrap() * 1.8) + 32.0);
-        }
-
-        if temp_f.is_some() && temp_c.is_none() {
-            temp_c = Some((temp_f.unwrap() - 32.0) * 0.5556);
-        }
-
-        if let Some(val) = temp_c {
+        if let Some(val) = sample.1.temp_c() {
             temps_c.push_str(&format!(
                 "temperature_c{} {:.1} {}\n",
                 labels, val, sample.1.ts
             ));
         }
 
-        if let Some(val) = temp_f {
+        if let Some(val) = sample.1.temp_f() {
             temps_f.push_str(&format!(
                 "temperature_f{} {:.1} {}\n",
                 labels, val, sample.1.ts
