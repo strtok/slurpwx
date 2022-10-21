@@ -6,12 +6,15 @@ use std::net::SocketAddr;
 use std::ops::Deref;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Sample {
+    #[serde(skip)]
+    ts: u128,
     model: String,
     id: Option<u32>,
     #[serde(rename = "temperature_C")]
@@ -73,7 +76,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut reader = BufReader::new(rtl_sdr_stdout).lines();
             while let Ok(Some(data)) = reader.next_line().await {
                 match serde_json::from_str::<Sample>(&data) {
-                    Ok(sample) => {
+                    Ok(mut sample) => {
+                        sample.ts = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis();
                         println!("{:?}", sample);
                         let mut samples = samples.write().await;
                         let _ = samples.insert(sample.key(), sample);
@@ -102,18 +109,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sample>>>>) -> String {
     let samples = samples.read().await;
 
-    // let temp_f = String::new();
-    // let temp_c = String::new();
-    let mut humidites = String::new();
+    let mut temp_f = String::new();
+    let mut temp_c = String::new();
+    let mut humidity = String::new();
 
     for sample in samples.iter() {
-        if let Some(humidity) = sample.1.humidity {
-            humidites.push_str(&format!(
-                "humidity{{model=\"{}\", id=\"{}\"}} {}\n",
-                sample.1.model,
-                sample.1.id.unwrap_or(0),
-                humidity
+        let labels = format!(
+            "{{model=\"{}\", id=\"{}\"}}",
+            sample.1.model,
+            sample.1.id.unwrap_or(0)
+        );
+
+        if let Some(val) = sample.1.temperature_c {
+            temp_c.push_str(&format!(
+                "temperature_c{} {} {}\n",
+                labels, val, sample.1.ts
             ));
+        }
+
+        if let Some(val) = sample.1.temperature_f {
+            temp_f.push_str(&format!(
+                "temperature_f{} {} {}\n",
+                labels, val, sample.1.ts
+            ));
+        }
+
+        if let Some(val) = sample.1.humidity {
+            humidity.push_str(&format!("humidity{} {} {}\n", labels, val, sample.1.ts));
         }
     }
 
@@ -121,14 +143,16 @@ async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sam
         r#"
 # HELP temperature_c The temperature in degrees celsius.
 # TYPE temperature_c gauge
+{}
 
 # HELP temperature_f The temperature in degrees fahrenheit.
 # TYPE temperature_f gauge    
+{}
     
 # HELP humidity The humidity
 # TYPE humidity gauge
 {}
 "#,
-        humidites
+        temp_c, temp_f, humidity
     )
 }
