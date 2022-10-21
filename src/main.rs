@@ -149,7 +149,7 @@ async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sam
 # TYPE temperature_f gauge    
 {}
     
-# HELP humidity The humidity
+# HELP humidity The humidity.
 # TYPE humidity gauge
 {}
 "#,
