@@ -10,6 +10,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 
+extern crate pretty_env_logger;
+#[macro_use]
+extern crate log;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Sample {
     #[serde(skip)]
@@ -54,6 +58,8 @@ impl Sample {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    pretty_env_logger::init();
+
     //
     // Execute rtl_433 process, capturing stdout
     //
@@ -76,7 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .wait()
             .await
             .expect("rtl_443 encountered an error");
-        eprintln!("rtl_443 status was: {}", status);
+        error!("rtl_443 status was: {}", status);
     });
 
     //
@@ -94,11 +100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .duration_since(UNIX_EPOCH)
                             .unwrap()
                             .as_millis();
-                        println!("{:?}", sample);
+                        trace!("{:?}", sample);
                         let mut samples = samples.write().await;
                         let _ = samples.insert(sample.key(), sample);
                     }
-                    Err(e) => eprintln!("could not parse {}: {}", data, e),
+                    Err(e) => error!("could not parse {}: {}", data, e),
                 }
             }
         });
@@ -110,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .layer(Extension(samples));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    eprintln!("listening on {}", addr);
+    info!("listening on {}", addr);
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         .await
@@ -159,7 +165,7 @@ async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sam
 {}
 
 # HELP temperature_f The temperature in degrees fahrenheit.
-# TYPE temperature_f gauge    
+# TYPE temperature_f gauge
 {}
     
 # HELP humidity The humidity.
