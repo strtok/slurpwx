@@ -1,9 +1,8 @@
-use axum::{response::Html, routing::get, Extension, Router};
+use axum::{routing::get, Extension, Router};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::SocketAddr;
-use std::ops::Deref;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,8 +108,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sample>>>>) -> String {
     let samples = samples.read().await;
 
-    let mut temp_f = String::new();
-    let mut temp_c = String::new();
+    let mut temps_f = String::new();
+    let mut temps_c = String::new();
     let mut humidity = String::new();
 
     for sample in samples.iter() {
@@ -120,22 +119,33 @@ async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sam
             sample.1.id.unwrap_or(0)
         );
 
-        if let Some(val) = sample.1.temperature_c {
-            temp_c.push_str(&format!(
-                "temperature_c{} {} {}\n",
+        let mut temp_c = sample.1.temperature_c;
+        let mut temp_f = sample.1.temperature_f;
+
+        if temp_c.is_some() && temp_f.is_none() {
+            temp_f = Some((temp_c.unwrap() * 1.8) + 32.0);
+        }
+
+        if temp_f.is_some() && temp_c.is_none() {
+            temp_c = Some((temp_f.unwrap() - 32.0) * 0.5556);
+        }
+
+        if let Some(val) = temp_c {
+            temps_c.push_str(&format!(
+                "temperature_c{} {:.1} {}\n",
                 labels, val, sample.1.ts
             ));
         }
 
-        if let Some(val) = sample.1.temperature_f {
-            temp_f.push_str(&format!(
-                "temperature_f{} {} {}\n",
+        if let Some(val) = temp_f {
+            temps_f.push_str(&format!(
+                "temperature_f{} {:.1} {}\n",
                 labels, val, sample.1.ts
             ));
         }
 
         if let Some(val) = sample.1.humidity {
-            humidity.push_str(&format!("humidity{} {} {}\n", labels, val, sample.1.ts));
+            humidity.push_str(&format!("humidity{} {:.1} {}\n", labels, val, sample.1.ts));
         }
     }
 
@@ -153,6 +163,6 @@ async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sam
 # TYPE humidity gauge
 {}
 "#,
-        temp_c, temp_f, humidity
+        temps_c, temps_f, humidity
     )
 }
