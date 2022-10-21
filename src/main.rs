@@ -39,7 +39,7 @@ impl Sample {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
-    // Execut rtl_433 process, capturing stdout
+    // Execute rtl_433 process, capturing stdout
     //
     let mut cmd = Command::new("rtl_433");
     cmd.stdout(Stdio::piped());
@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     //
-    // Spawn a thread to read stdout from rtl_443 and populate metrics
+    // Spawn a thread to read stdout from rtl_443 and populate samples
     //
     let samples = Arc::new(RwLock::new(HashMap::<SampleKey, Sample>::new()));
     {
@@ -83,6 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
+
     // Start metrics webserver
     let app = Router::new()
         .route("/metrics", get(metrics))
@@ -98,9 +99,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn metrics(
-    Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sample>>>>,
-) -> Html<String> {
+async fn metrics(Extension(samples): Extension<Arc<RwLock<HashMap<SampleKey, Sample>>>>) -> String {
     let samples = samples.read().await;
-    Html(format!("{:#?}", samples))
+
+    // let temp_f = String::new();
+    // let temp_c = String::new();
+    let mut humidites = String::new();
+
+    for sample in samples.iter() {
+        if let Some(humidity) = sample.1.humidity {
+            humidites.push_str(&format!(
+                "humidity{{model=\"{}\", id=\"{}\"}} {}\n",
+                sample.1.model,
+                sample.1.id.unwrap_or(0),
+                humidity
+            ));
+        }
+    }
+
+    format!(
+        r#"
+# HELP temperature_c The temperature in degrees celsius.
+# TYPE temperature_c gauge
+
+# HELP temperature_f The temperature in degrees fahrenheit.
+# TYPE temperature_f gauge    
+    
+# HELP humidity The humidity
+# TYPE humidity gauge
+{}
+"#,
+        humidites
+    )
 }
